@@ -72,7 +72,10 @@ function parseMLExcel(data) {
   const headerRow = data[5] || []
   const col = {}
   headerRow.forEach((name, i) => {
-    if (name) col[String(name).trim()] = i
+    if (name) {
+      const key = String(name).trim()
+      if (col[key] === undefined) col[key] = i
+    }
   })
 
   // Helper: get value by column name, fallback to fixed index if name not found
