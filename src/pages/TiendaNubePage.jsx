@@ -174,7 +174,8 @@ export default function TiendaNubePage() {
     if (!file) return
     setLoading(true)
     try {
-      const text = await file.text()
+      const buffer = await file.arrayBuffer()
+      const text = new TextDecoder('iso-8859-1').decode(buffer)
       const lines = text.split('\n').filter(l => l.trim())
       const headers = lines[0].split(';').map(h => h.replace(/"/g, '').trim())
       const rows = lines.slice(1).map(line => {
