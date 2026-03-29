@@ -68,22 +68,35 @@ function calcularVenta(v, config) {
 }
 
 function parseMLExcel(data) {
-  const rows = data.slice(5).filter(r => r[0])
+  // Find header row (row index 5) and build a column name → index map
+  const headerRow = data[5] || []
+  const col = {}
+  headerRow.forEach((name, i) => {
+    if (name) col[String(name).trim()] = i
+  })
+
+  // Helper: get value by column name, fallback to fixed index if name not found
+  const byName = (row, name, fallback) => {
+    const idx = col[name] !== undefined ? col[name] : fallback
+    return row[idx]
+  }
+
+  const rows = data.slice(6).filter(r => r[col['# de venta'] ?? 0])
   return rows.map(r => ({
-    numero_venta:      String(r[0]  || ''),
-    fecha_raw:         String(r[1]  || ''),
-    estado:            String(r[2]  || ''),
-    unidades:          parseFloat(r[6])  || 0,
-    ingresos_producto: parseFloat(r[7])  || 0,
-    cargo_venta:       parseFloat(r[8])  || 0,
-    costo_fijo:        parseFloat(r[9])  || 0,
-    costo_cuotas:      parseFloat(r[10]) || 0,
-    ingresos_envio:    parseFloat(r[11]) || 0,
-    costos_envio_ml:   parseFloat(r[12]) || 0,
-    total:             parseFloat(r[18]) || 0,
-    titulo:            String(r[23] || ''),
-    variante:          String(r[24] || ''),
-    forma_entrega:     String(r[39] || ''),
+    numero_venta:      String(byName(r, '# de venta', 0)  || ''),
+    fecha_raw:         String(byName(r, 'Fecha de venta', 1)  || ''),
+    estado:            String(byName(r, 'Estado', 2)  || ''),
+    unidades:          parseFloat(byName(r, 'Unidades', 6))  || 0,
+    ingresos_producto: parseFloat(byName(r, 'Ingresos por productos (ARS)', 7))  || 0,
+    cargo_venta:       parseFloat(byName(r, 'Cargo por venta', 8))  || 0,
+    costo_fijo:        parseFloat(byName(r, 'Costo fijo', 9))  || 0,
+    costo_cuotas:      parseFloat(byName(r, 'Costo por ofrecer cuotas', 10)) || 0,
+    ingresos_envio:    parseFloat(byName(r, 'Ingresos por envío (ARS)', 11)) || 0,
+    costos_envio_ml:   parseFloat(byName(r, 'Costos de envío (ARS)', 12)) || 0,
+    total:             parseFloat(byName(r, 'Total (ARS)', 18)) || 0,
+    titulo:            String(byName(r, 'Título de la publicación', 23) || ''),
+    variante:          String(byName(r, 'Variante', 24) || ''),
+    forma_entrega:     String(byName(r, 'Forma de entrega', 39) || ''),
   })).filter(r => !debeExcluir(r.estado) && r.total && r.total !== 0)
 }
 
