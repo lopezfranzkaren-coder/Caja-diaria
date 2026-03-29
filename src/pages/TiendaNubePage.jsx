@@ -177,20 +177,34 @@ export default function TiendaNubePage() {
       const buffer = await file.arrayBuffer()
       const text = new TextDecoder('iso-8859-1').decode(buffer)
       const lines = text.split('\n').filter(l => l.trim())
-      const headers = lines[0].split(';').map(h => h.replace(/"/g, '').trim())
+
+      // Map column names to indexes using normalized comparison
+      const rawHeaders = lines[0].split(';').map(h => h.replace(/"/g, '').trim())
+      const normalize = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+      const colIdx = {}
+      rawHeaders.forEach((h, i) => { colIdx[normalize(h)] = i })
+
+      const getCol = (vals, name) => (vals[colIdx[normalize(name)]] || '').replace(/"/g, '').trim()
+
       const rows = lines.slice(1).map(line => {
-        const vals = line.split(';').map(v => v.replace(/"/g, '').trim())
-        const obj = {}
-        headers.forEach((h, i) => obj[h] = vals[i] || '')
-        return obj
-      }).filter(r => r['Número de orden'])
+        const vals = line.split(';')
+        return {
+          numero_orden: getCol(vals, 'Número de orden'),
+          fecha: getCol(vals, 'Fecha'),
+          total: getCol(vals, 'Total'),
+          medio_pago: getCol(vals, 'Medio de pago'),
+          producto: getCol(vals, 'Nombre del producto'),
+          precio: getCol(vals, 'Precio del producto'),
+          cantidad: getCol(vals, 'Cantidad del producto'),
+        }
+      }).filter(r => r.numero_orden && !isNaN(parseInt(r.numero_orden)))
 
       // Agrupar por orden para detectar mayoristas
       const porOrden = {}
       rows.forEach(r => {
-        const num = r['Número de orden']
-        if (!porOrden[num]) porOrden[num] = { total: 0, medio_pago: r['Medio de pago'] || '', rows: [] }
-        porOrden[num].total += parseFloat(r['Total'] || 0)
+        const num = r.numero_orden
+        if (!porOrden[num]) porOrden[num] = { total: 0, medio_pago: r.medio_pago || '', rows: [] }
+        porOrden[num].total += parseFloat(r.total) || 0
         porOrden[num].rows.push(r)
       })
 
@@ -201,15 +215,15 @@ export default function TiendaNubePage() {
       const items = []
       minoristas.forEach(orden => {
         orden.rows.forEach(r => {
-          if (!r['Nombre del producto']) return
-          const fecha = r['Fecha'] || ''
+          if (!r.producto) return
+          const fecha = r.fecha || ''
           const mes = fecha.slice(6, 10) + '-' + fecha.slice(3, 5)
           items.push({
             mes,
-            numero_orden: parseInt(r['Número de orden']),
-            producto: r['Nombre del producto'],
-            cantidad: parseInt(r['Cantidad del producto']) || 1,
-            precio_unitario: parseFloat(r['Precio del producto']) || 0,
+            numero_orden: parseInt(r.numero_orden),
+            producto: r.producto,
+            cantidad: parseInt(r.cantidad) || 1,
+            precio_unitario: parseFloat(r.precio) || 0,
             medio_pago: orden.medio_pago,
           })
         })
