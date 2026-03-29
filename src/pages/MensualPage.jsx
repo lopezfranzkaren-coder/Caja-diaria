@@ -20,8 +20,9 @@ export default function MensualPage() {
   const [loading, setLoading] = useState(false)
 
   const months = []
+  const now = new Date()
   for (let i = 0; i < 18; i++) {
-    const d = new Date(); d.setMonth(d.getMonth() - i)
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
     months.push(d.toISOString().slice(0, 7))
   }
 
