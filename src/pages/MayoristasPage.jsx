@@ -178,8 +178,9 @@ export default function MayoristasPage() {
   const pendiente = ventas.filter(v => !v.pagado).reduce((a, v) => a + (v.monto - (v.monto_pagado || 0)), 0)
 
   const months = []
+  const now = new Date()
   for (let i = 0; i < 12; i++) {
-    const d = new Date(); d.setMonth(d.getMonth() - i)
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
     months.push(d.toISOString().slice(0, 7))
   }
 
