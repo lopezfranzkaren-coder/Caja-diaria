@@ -71,10 +71,59 @@ function GastoModal({ gasto, onClose, onSaved }) {
 export default function GastosPage() {
   const toast = useToast()
   const [gastos, setGastos] = useState([])
-  const [modal, setModal] = useState(null) // null | {} | {existing gasto}
+  const [modal, setModal] = useState(null)
   const [filtroMes, setFiltroMes] = useState(new Date().toISOString().slice(0, 7))
+  const [showImport, setShowImport] = useState(false)
+  const [gastosAnteriores, setGastosAnteriores] = useState([])
+  const [seleccionados, setSeleccionados] = useState({})
+  const [importing, setImporting] = useState(false)
 
   useEffect(() => { loadGastos() }, [filtroMes])
+
+  function mesAnterior(mes) {
+    const [y, m] = mes.split('-').map(Number)
+    const d = new Date(y, m - 2, 1)
+    return d.toISOString().slice(0, 7)
+  }
+
+  async function abrirImport() {
+    const prev = mesAnterior(filtroMes)
+    const start = prev + '-01'
+    const end = new Date(parseInt(prev.split('-')[0]), parseInt(prev.split('-')[1]), 0).toISOString().slice(0, 10)
+    const { data } = await supabase.from('gastos').select('*').gte('fecha', start).lte('fecha', end).order('categoria')
+    setGastosAnteriores(data || [])
+    setSeleccionados({})
+    setShowImport(true)
+  }
+
+  function toggleSeleccion(id) {
+    setSeleccionados(p => ({ ...p, [id]: !p[id] }))
+  }
+
+  function seleccionarTodos() {
+    const todos = {}
+    gastosAnteriores.forEach(g => { todos[g.id] = true })
+    setSeleccionados(todos)
+  }
+
+  async function confirmarImport() {
+    const elegidos = gastosAnteriores.filter(g => seleccionados[g.id])
+    if (!elegidos.length) { return }
+    setImporting(true)
+    const rows = elegidos.map(g => ({
+      fecha: filtroMes + '-01',
+      descripcion: g.descripcion,
+      monto: g.monto,
+      categoria: g.categoria,
+      notas: g.notas,
+      updated_at: new Date().toISOString()
+    }))
+    await supabase.from('gastos').insert(rows)
+    toast(`✓ ${rows.length} gastos importados`)
+    setImporting(false)
+    setShowImport(false)
+    loadGastos()
+  }
 
   async function loadGastos() {
     const start = filtroMes + '-01'
@@ -99,7 +148,8 @@ export default function GastosPage() {
   // Generate month options
   const months = []
   for (let i = 0; i < 12; i++) {
-    const d = new Date(new Date().getFullYear(), new Date().getMonth() - i, 1)
+    const d = new Date()
+    d.setMonth(d.getMonth() - i)
     months.push(d.toISOString().slice(0, 7))
   }
 
@@ -118,7 +168,10 @@ export default function GastosPage() {
             })}
           </select>
         </div>
-        <button className="btn btn-primary" onClick={() => setModal({})}>+ Nuevo gasto</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" onClick={abrirImport}>📋 Importar del mes anterior</button>
+          <button className="btn btn-primary" onClick={() => setModal({})}>+ Nuevo gasto</button>
+        </div>
       </div>
 
       {gastos.length > 0 && (
@@ -179,6 +232,46 @@ export default function GastosPage() {
 
       {modal !== null && (
         <GastoModal gasto={modal} onClose={() => setModal(null)} onSaved={loadGastos} />
+      )}
+
+      {showImport && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowImport(false)}>
+          <div className="modal" style={{ maxWidth: 560 }}>
+            <div className="modal-title">📋 Importar gastos del mes anterior</div>
+            {gastosAnteriores.length === 0 ? (
+              <p style={{ color: 'var(--muted)', fontSize: 13 }}>No hay gastos registrados en el mes anterior.</p>
+            ) : (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>{Object.values(seleccionados).filter(Boolean).length} seleccionados</span>
+                  <button className="btn btn-ghost btn-sm" onClick={seleccionarTodos}>Seleccionar todos</button>
+                </div>
+                <div style={{ maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {gastosAnteriores.map(g => (
+                    <div key={g.id} onClick={() => toggleSeleccion(g.id)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                        background: seleccionados[g.id] ? 'var(--surface2)' : 'transparent',
+                        border: `1px solid ${seleccionados[g.id] ? 'var(--accent)' : 'var(--border)'}` }}>
+                      <input type="checkbox" checked={!!seleccionados[g.id]} onChange={() => toggleSeleccion(g.id)}
+                        style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--accent)' }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13 }}>{g.descripcion}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>{g.categoria}</div>
+                      </div>
+                      <div style={{ fontFamily: 'Fraunces, serif', fontSize: 15, color: 'var(--danger)' }}>{fmt(g.monto)}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            <div className="actions" style={{ marginTop: 16 }}>
+              <button className="btn btn-primary" onClick={confirmarImport} disabled={importing || !Object.values(seleccionados).some(Boolean)}>
+                {importing ? 'Importando...' : `Importar ${Object.values(seleccionados).filter(Boolean).length} gastos`}
+              </button>
+              <button className="btn btn-ghost" onClick={() => setShowImport(false)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
