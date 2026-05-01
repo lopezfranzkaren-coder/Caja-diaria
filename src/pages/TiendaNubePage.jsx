@@ -178,7 +178,6 @@ export default function TiendaNubePage() {
       const text = new TextDecoder('iso-8859-1').decode(buffer)
       const lines = text.split('\n').filter(l => l.trim())
 
-      // Map column names to indexes using normalized comparison
       const rawHeaders = lines[0].split(';').map(h => h.replace(/"/g, '').trim())
       const normalize = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
       const colIdx = {}
@@ -191,7 +190,8 @@ export default function TiendaNubePage() {
         return {
           numero_orden: getCol(vals, 'Número de orden'),
           fecha: getCol(vals, 'Fecha'),
-          total: getCol(vals, 'Total'),
+          // FIX: guardar tanto el total de la orden como el precio del producto
+          total_orden: getCol(vals, 'Total'),
           medio_pago: getCol(vals, 'Medio de pago'),
           producto: getCol(vals, 'Nombre del producto'),
           precio: getCol(vals, 'Precio del producto'),
@@ -199,18 +199,30 @@ export default function TiendaNubePage() {
         }
       }).filter(r => r.numero_orden && !isNaN(parseInt(r.numero_orden)))
 
-      // Agrupar por orden para detectar mayoristas
+      // Agrupar por orden — usar el Total real de la orden (incluye envío, descuentos)
       const porOrden = {}
       rows.forEach(r => {
         const num = r.numero_orden
-        if (!porOrden[num]) porOrden[num] = { total: 0, medio_pago: r.medio_pago || '', rows: [] }
-        porOrden[num].total += parseFloat(r.total) || 0
+        if (!porOrden[num]) {
+          porOrden[num] = {
+            total_orden: 0,
+            medio_pago: r.medio_pago || '',
+            rows: [],
+            total_set: false,
+          }
+        }
+        // El total_orden solo viene en la primera fila de cada orden
+        if (r.total_orden && !porOrden[num].total_set) {
+          porOrden[num].total_orden = parseFloat(r.total_orden) || 0
+          porOrden[num].total_set = true
+        }
+        if (r.medio_pago) porOrden[num].medio_pago = r.medio_pago
         porOrden[num].rows.push(r)
       })
 
-      // Filtrar mayoristas y armar items
-      const minoristas = Object.values(porOrden).filter(o => o.total <= LIMITE_MAYORISTA)
-      const mayoristas = Object.values(porOrden).filter(o => o.total > LIMITE_MAYORISTA)
+      // Filtrar mayoristas
+      const minoristas = Object.values(porOrden).filter(o => o.total_orden <= LIMITE_MAYORISTA)
+      const mayoristas = Object.values(porOrden).filter(o => o.total_orden > LIMITE_MAYORISTA)
 
       const items = []
       minoristas.forEach(orden => {
@@ -224,6 +236,8 @@ export default function TiendaNubePage() {
             producto: r.producto,
             cantidad: parseInt(r.cantidad) || 1,
             precio_unitario: parseFloat(r.precio) || 0,
+            // FIX: guardar el total real de la orden para calcular facturado correcto
+            total_orden: orden.total_orden,
             medio_pago: orden.medio_pago,
           })
         })
@@ -269,20 +283,54 @@ export default function TiendaNubePage() {
     .map(([prod, d]) => ({ prod, ...d, ordenes: d.ordenes.size, precio_unit: d.subtotal / d.cantidad }))
     .sort((a, b) => b.cantidad - a.cantidad)
 
-  const totalBruto = ranking.reduce((a, r) => a + r.subtotal, 0)
-  const totalUnidades = ranking.reduce((a, r) => a + r.cantidad, 0)
-  const totalOrdenes = new Set(productos.map(p => p.numero_orden)).size
+  // FIX: calcular facturado bruto usando total_orden (una vez por orden, no por producto)
+  const ordenesVistas = new Set()
+  let totalBruto = 0
+  productos.forEach(p => {
+    if (!ordenesVistas.has(p.numero_orden)) {
+      ordenesVistas.add(p.numero_orden)
+      totalBruto += parseFloat(p.total_orden) || parseFloat(p.subtotal) || 0
+    }
+  })
 
-  // Costos totales estimados
+  const totalUnidades = ranking.reduce((a, r) => a + r.cantidad, 0)
+  const totalOrdenes = ordenesVistas.size
+
+  // Costos totales estimados sobre el total real facturado
   const costosProm = productos.reduce((a, p) => {
-    const c = calcularCostos(parseFloat(p.subtotal) || 0, p.medio_pago, config)
-    return a + c.costo_total
+    if (ordenesVistas.has(p.numero_orden)) {
+      // calcular costo solo una vez por orden usando total_orden
+    }
+    return a
   }, 0)
-  const netoTotal = totalBruto - costosProm
-  const cptTotal = totalBruto * config.cpt_tn / 100
-  const iibbTotal = totalBruto * config.iibb_prom / 100
-  const sirtacTotal = totalBruto * config.sirtac_prom / 100
-  const tasaPNTotal = costosProm - cptTotal - iibbTotal - sirtacTotal
+
+  // Recalcular costos correctamente: una vez por orden
+  const ordenesParaCosto = {}
+  productos.forEach(p => {
+    if (!ordenesParaCosto[p.numero_orden]) {
+      ordenesParaCosto[p.numero_orden] = {
+        total: parseFloat(p.total_orden) || parseFloat(p.subtotal) || 0,
+        medio_pago: p.medio_pago || ''
+      }
+    }
+  })
+
+  let costosTotal = 0
+  let cptTotal = 0
+  let iibbTotal = 0
+  let sirtacTotal = 0
+  let tasaPNTotal = 0
+
+  Object.values(ordenesParaCosto).forEach(o => {
+    const c = calcularCostos(o.total, o.medio_pago, config)
+    costosTotal += c.costo_total
+    cptTotal += c.cpt
+    iibbTotal += c.iibb
+    sirtacTotal += c.sirtac
+    tasaPNTotal += c.tasa_pn
+  })
+
+  const netoTotal = totalBruto - costosTotal
 
   const totalFacturado = registros.reduce((a, r) => a + r.facturado, 0)
   const totalVentas = registros.reduce((a, r) => a + r.ventas, 0)
@@ -399,10 +447,10 @@ export default function TiendaNubePage() {
               <div className="card" style={{ marginBottom: 16 }}>
                 <div className="card-title">💸 Desglose de costos estimados del mes</div>
                 {[
-                  ['CPT Tienda Nube (2%)', cptTotal],
+                  [`CPT Tienda Nube (${config.cpt_tn}%)`, cptTotal],
                   ['Tasa Pago Nube', tasaPNTotal],
-                  ['IIBB promedio', iibbTotal],
-                  ['SIRTAC promedio', sirtacTotal],
+                  [`IIBB promedio`, iibbTotal],
+                  [`SIRTAC promedio`, sirtacTotal],
                 ].map(([label, val]) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
                     <span style={{ fontSize: 13, color: 'var(--muted)' }}>{label}</span>
@@ -411,7 +459,7 @@ export default function TiendaNubePage() {
                 ))}
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0' }}>
                   <span style={{ fontWeight: 500 }}>Total costos</span>
-                  <span style={{ fontFamily: 'Fraunces, serif', fontSize: 18, color: 'var(--danger)' }}>−{fmt(costosProm)} ({(costosProm/totalBruto*100).toFixed(1)}%)</span>
+                  <span style={{ fontFamily: 'Fraunces, serif', fontSize: 18, color: 'var(--danger)' }}>−{fmt(costosTotal)} ({(costosTotal/totalBruto*100).toFixed(1)}%)</span>
                 </div>
               </div>
 
@@ -443,7 +491,7 @@ export default function TiendaNubePage() {
               <div className="empty-state">
                 <div className="icon">🛍️</div>
                 <p>No hay productos importados para este mes</p>
-                <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>Exportá el CSV desde Tienda Nube → Estadísticas → Ventas → Exportar</p>
+                <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>Exportá el CSV desde Tienda Nube → Ventas → Exportar</p>
               </div>
             </div>
           )}
