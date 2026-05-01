@@ -260,7 +260,7 @@ export default function TiendaNubePage() {
     let imported = 0
     for (let i = 0; i < preview.items.length; i += BATCH) {
       const batch = preview.items.slice(i, i + BATCH)
-      const { error } = await supabase.from('tiendanube_productos').upsert(batch, { onConflict: 'numero_orden,producto' })
+      const { error } = await supabase.from('tiendanube_productos').insert(batch)
       if (!error) imported += batch.length
     }
     toast(`✓ ${imported} productos importados`)
